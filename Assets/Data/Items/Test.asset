@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 48078b1431224a079a1d37188a5ab417, type: 3}
+  m_Name: Test
+  m_EditorClassIdentifier: 
+  category: 
+  usageHp: 0
+  usageDestroy: 0
+  tooltip: 
+  image: {fileID: 0}
+  maxStack: 0
+  destroyable: 0
+  equipHpBonus: 0
+  equipDefenseBonus: 0
+  equipDamageBonus: 0
+  _3dmodel: {fileID: 0}
+  spawnOnUse: {fileID: 0}

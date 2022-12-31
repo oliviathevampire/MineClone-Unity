@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
-public class AudioManager : MonoBehaviour
-{
+
+public class AudioManager : MonoBehaviour {
 	public static AudioManager instance { get; private set; }
 
 	public Music music = new Music();
@@ -14,17 +14,14 @@ public class AudioManager : MonoBehaviour
 	private bool forceMusicRestart;
 	public bool ready;
 
-	private void Awake()
-	{
-		if (instance != null)
-		{
+	private void Awake() {
+		if (instance != null) {
 			gameObject.SetActive(false);
 			return;
 		}
 	}
 
-	public void Initialize()
-	{
+	public void Initialize() {
 		if (ready) return;
 		instance = this;
 		StartCoroutine(Load());
@@ -32,69 +29,63 @@ public class AudioManager : MonoBehaviour
 		DontDestroyOnLoad(this);
 	}
 
-	public void PlayNewPlaylist(AudioClip[] playlist)
-	{
+	public void PlayNewPlaylist(AudioClip[] playlist) {
 		//Debug.Log("Force Start Music");
 		musicPlaylist = playlist;
 		forceMusicRestart = true;
 	}
 
-	public bool IsPlayingMusic()
-	{
-		return (musicPlaylist != null && musicPlaylist.Length>0);
+	public bool IsPlayingMusic() {
+		return (musicPlaylist != null && musicPlaylist.Length > 0);
 	}
 
-	private IEnumerator MusicPlayer()
-	{
+	private IEnumerator MusicPlayer() {
 		float waitForNextTrack = 0;
-		while (true)
-		{
+		while (true) {
 			yield return null;
 			if (!ready) continue;
-			if (forceMusicRestart)
-			{
-				if (musicAudioSource.clip != null)
-				{
-					if (musicAudioSource.isPlaying)
-					{
+			if (forceMusicRestart) {
+				if (musicAudioSource.clip != null) {
+					if (musicAudioSource.isPlaying) {
 						musicAudioSource.volume = musicAudioSource.volume - Time.deltaTime;
 						if (musicAudioSource.volume > 0) continue;
 						musicAudioSource.Stop();
 					}
+
 					waitForNextTrack = 0;
 					musicAudioSource.clip = null;
 				}
+
 				forceMusicRestart = false;
 			}
-			if (!musicAudioSource.isPlaying)
-			{
-				if (waitForNextTrack > 0)
-				{
+
+			if (!musicAudioSource.isPlaying) {
+				if (waitForNextTrack > 0) {
 					waitForNextTrack -= Time.deltaTime;
 					continue;
 				}
-				if (musicPlaylist == null || musicPlaylist.Length==0) continue;
-				if (musicAudioSource.clip != null)
-				{
+
+				if (musicPlaylist == null || musicPlaylist.Length == 0) continue;
+				if (musicAudioSource.clip != null) {
 					int currentIndex = System.Array.IndexOf(musicPlaylist, musicAudioSource.clip);
 					currentIndex++;
 					if (currentIndex >= musicPlaylist.Length) currentIndex = 0;
 					musicAudioSource.clip = musicPlaylist[currentIndex];
 					musicAudioSource.Play();
 				}
-				else
-				{
+				else {
 					musicAudioSource.clip = musicPlaylist[0];
 					musicAudioSource.Play();
 				}
+
 				waitForNextTrack = Random.Range(60, 180);
 			}
+
 			musicAudioSource.volume = 1;
 		}
 	}
 
-	private IEnumerator Load()
-	{
+	private IEnumerator Load() {
 		yield return null;
 
 		musicAudioSource = gameObject.AddComponent<AudioSource>();
@@ -107,10 +98,10 @@ public class AudioManager : MonoBehaviour
 		List<AudioClip> creative = Resources.LoadAll<AudioClip>("Audio/music/game/creative").ToList();
 		List<AudioClip> menu = Resources.LoadAll<AudioClip>("Audio/music/menu").ToList();
 
-		foreach (AudioClip ac in creative)
-		{
+		foreach (AudioClip ac in creative) {
 			game.Remove(ac);
 		}
+
 		music.game.clips = Shuffle(game).ToArray();
 		music.game.creative.clips = Shuffle(creative).ToArray();
 		music.menu.clips = Shuffle(menu).ToArray();
@@ -119,19 +110,18 @@ public class AudioManager : MonoBehaviour
 
 		yield return null;
 
-		AudioClip[] digSounds = Resources.LoadAll<AudioClip>("Audio/dig");
-		List<AudioClip> grassSounds = new List<AudioClip>();
-		List<AudioClip> stoneSounds = new List<AudioClip>();
-		List<AudioClip> woodSounds = new List<AudioClip>();
-		List<AudioClip> gravelSounds = new List<AudioClip>();
+		var digSounds = Resources.LoadAll<AudioClip>("Audio/dig");
+		var grassSounds = new List<AudioClip>();
+		var stoneSounds = new List<AudioClip>();
+		var woodSounds = new List<AudioClip>();
+		var gravelSounds = new List<AudioClip>();
 
-		for (int i = 0; i < digSounds.Length; ++i)
-		{
-			if (digSounds[i].name.Contains("wet")) continue;
-			if (digSounds[i].name.Contains("grass")) grassSounds.Add(digSounds[i]);
-			if (digSounds[i].name.Contains("stone")) stoneSounds.Add(digSounds[i]);
-			if (digSounds[i].name.Contains("gravel")) gravelSounds.Add(digSounds[i]);
-			if (digSounds[i].name.Contains("wood")) woodSounds.Add(digSounds[i]);
+		foreach (var t in digSounds) {
+			if (t.name.Contains("wet")) continue;
+			if (t.name.Contains("grass")) grassSounds.Add(t);
+			if (t.name.Contains("stone")) stoneSounds.Add(t);
+			if (t.name.Contains("gravel")) gravelSounds.Add(t);
+			if (t.name.Contains("wood")) woodSounds.Add(t);
 		}
 
 		dig.grass = grassSounds.ToArray();
@@ -146,77 +136,70 @@ public class AudioManager : MonoBehaviour
 	}
 
 	[System.Serializable]
-	public class Music
-	{
-		public Game game = new Game();
-		public Menu menu = new Menu();
+	public class Music {
+		public Game game = new();
+		public Menu menu = new();
+
 		[System.Serializable]
-		public class Game
-		{
+		public class Game {
 			public AudioClip[] clips;
 			public Creative creative;
+
 			[System.Serializable]
-			public class Creative
-			{
+			public class Creative {
 				public AudioClip[] clips;
 			}
 		}
+
 		[System.Serializable]
-		public class Menu
-		{
+		public class Menu {
 			public AudioClip[] clips;
 		}
 	}
 
 	[System.Serializable]
-	public class Dig
-	{
-		public void Play(Type type, Vector3 position)
-		{
+	public class Dig {
+		public void Play(Type type, Vector3 position) {
 			Debug.Log("Playing sound of type " + type);
-			AudioClip[] clips = GetClips(type);
+			var clips = GetClips(type);
 			if (clips == null) return;
-			AudioClip clip = clips[Random.Range(0,clips.Length)];
+			var clip = clips[Random.Range(0, clips.Length)];
 			//Debug.Log("Playing sound " + clip.name);
 			AudioSource.PlayClipAtPoint(clip, position);
 		}
 
-		public enum Type
-		{
+		public enum Type {
 			Silent,
 			Stone,
 			Wood,
 			Gravel,
 			Grass
 		}
-		public AudioClip[] GetClips(Type type)
-		{
-			switch (type)
-			{
-				case Type.Stone: return stone;
-				case Type.Wood: return wood;
-				case Type.Gravel: return gravel;
-				case Type.Grass: return grass;
-			}
-			return null;
+
+		public AudioClip[] GetClips(Type type) {
+			return type switch {
+				Type.Stone => stone,
+				Type.Wood => wood,
+				Type.Gravel => gravel,
+				Type.Grass => grass,
+				_ => null
+		    };
 		}
+
 		public AudioClip[] stone, wood, gravel, grass;
 	}
 
 	//https://stackoverflow.com/questions/273313/randomize-a-listt
-	private System.Random rnd = new System.Random();
-	private IList<T> Shuffle<T>(IList<T> list)
-	{
-		int n = list.Count;
-		while (n > 1)
-		{
+	private readonly System.Random _rnd = new();
+
+	private IList<T> Shuffle<T>(IList<T> list) {
+		var n = list.Count;
+		while (n > 1) {
 			n--;
-			int k = rnd.Next(n + 1);
-			T value = list[k];
-			list[k] = list[n];
-			list[n] = value;
+			var k = _rnd.Next(n + 1);
+			(list[k], list[n]) = (list[n], list[k]);
 		}
+
 		return list;
 	}
-
 }

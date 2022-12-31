@@ -13,7 +13,7 @@ public class LoadingScreen : MonoBehaviour
 	public TextMeshProUGUI percentageText;
     public void Initialize()
     {
-		renderDistance = GameManager.instance.gameSettings.RenderDistance;
+		renderDistance = GameManager.Instance.gameSettings.renderDistance;
 		loadingTexture = new Texture2D(renderDistance, renderDistance, TextureFormat.ARGB32, false);
 		loadingTexture.filterMode = FilterMode.Point;
 		loadingGraphic.texture = loadingTexture;

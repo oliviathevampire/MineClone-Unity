@@ -1,0 +1,53 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 995b0fe3b16b4b3a9c3242769192f979, type: 3}
+  m_Name: Badlands
+  m_EditorClassIdentifier: 
+  biomeName: Badlands
+  offset: 6545
+  scale: 0.058
+  minNoiseValue: 0
+  maxNoiseValue: 0.1
+  terrainHeight: 10
+  terrainScale: 0.05
+  surfaceBlock: 18
+  subSurfaceBlock: 19
+  majorFloraIndex: 1
+  majorFloraZoneScale: 1.06
+  majorFloraZoneThreshold: 0.75
+  majorFloraPlacementScale: 7.5
+  majorFloraPlacementThreshold: 0.8
+  placeMajorFlora: 1
+  maxHeight: 12
+  minHeight: 5
+  lodes:
+  - nodeName: Dirt
+    blockID: 2
+    minHeight: 1
+    maxHeight: 255
+    scale: 0.1
+    threshold: 0.5
+    noiseOffset: 0
+  - nodeName: Sand
+    blockID: 18
+    minHeight: 30
+    maxHeight: 60
+    scale: 0.2
+    threshold: 0.6
+    noiseOffset: 500
+  - nodeName: Caves
+    blockID: 255
+    minHeight: 5
+    maxHeight: 60
+    scale: 0.1
+    threshold: 0.55
+    noiseOffset: 43534

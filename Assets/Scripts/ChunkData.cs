@@ -1,92 +1,89 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 using System.Threading;
 using System.Collections.Generic;
-public class ChunkData
-{
+using Block = Blocks.Block;
+
+public class ChunkData {
 	public Vector2Int position;
-	private byte[,,] blocks, light;
-	public bool terrainReady { get; private set; }
-	public bool startedLoadingDetails { get; private set; }
-	public bool chunkReady { get; private set; }
+	private Block[,,] _blocks;
+	public bool TerrainReady { get; private set; }
+	public bool StartedLoadingDetails { get; private set; }
+	public bool ChunkReady { get; private set; }
 
 	public bool isDirty;
 
-	//devide by chance ( 1 in X )
-	const int STRUCTURE_CHANCE_TREE = (int.MaxValue / 100);
-	const int STRUCTURE_CHANCE_WELL = (int.MaxValue / 512);
-	const int STRUCTURE_CHANCE_CAVE_ENTRANCE = (int.MaxValue / 50);
+	private const int SURFACE_HEIGHT = 64;
+
+	//divides by chance ( 1 in X )
+	private const int STRUCTURE_CHANCE_TREE = int.MaxValue / 100;
+	private const int STRUCTURE_CHANCE_BIRCH_TREE = int.MaxValue / 150;
+	private const int STRUCTURE_CHANCE_WELL = int.MaxValue / 255;
+	private const int STRUCTURE_CHANCE_CAVE_ENTRANCE = int.MaxValue / 20;
 
 
-	private Thread loadTerrainThread;
-	private Thread loadDetailsThread;
+	private Thread _loadTerrainThread;
+	private Thread _loadDetailsThread;
 
-	public HashSet<Vector2Int> references;
+	private readonly WorldInfo _worldInfo;
+	private World world;
 
-	public List<StructureInfo> structures;
+	public readonly HashSet<Vector2Int> references;
 
-	public Dictionary<Vector3Int, byte> lightSources;
+	private List<StructureInfo> _structures;
 
-	public byte[,] highestNonAirBlock;
+	public readonly Dictionary<Vector3Int, int> lightSources;
 
-	public ChunkSaveData saveData;
+	public readonly int[,] highestNonAirBlock;
+
+	private ChunkSaveData _saveData;
 
 	private ChunkData front, left, back, right; //neighbours (only exist while loading structures)
 
-	public struct StructureInfo
-	{
-		public StructureInfo(Vector3Int position, Structure.Type type, int seed)
-		{
+	private volatile int _worldX, _worldZ;
+	private static FastNoiseLite noise;
+
+	private struct StructureInfo {
+		public StructureInfo(Vector3Int position, Structure.Type type, int seed) {
 			this.position = position;
 			this.type = type;
 			this.seed = seed;
 		}
-		public Vector3Int position;
-		public Structure.Type type;
-		public int seed;
+
+		public readonly Vector3Int position;
+		public readonly Structure.Type type;
+		public readonly int seed;
 	}
 
 
-	public ChunkData(Vector2Int position)
-	{
+	public ChunkData(Vector2Int position, World world) {
 		this.position = position;
-		terrainReady = false;
-		startedLoadingDetails = false;
-		chunkReady = false;
+		_worldInfo = world.info;
+		this.world = world;
+		noise = World.noise;
+		TerrainReady = false;
+		StartedLoadingDetails = false;
+		ChunkReady = false;
 		isDirty = false;
 		references = new HashSet<Vector2Int>();
-		lightSources = new Dictionary<Vector3Int, byte>();
-		highestNonAirBlock = new byte[16, 16];
+		lightSources = new Dictionary<Vector3Int, int>();
+		highestNonAirBlock = new int[VoxelData.ChunkWidth, VoxelData.ChunkWidth];
 	}
 
-	public byte[,,] GetBlocks()
-	{
+	public Block[,,] GetBlocks() {
 		//if (!chunkReady) throw new System.Exception($"Chunk {position} has not finished loading");
-		return blocks;
+		return _blocks;
 	}
 
-	public byte[,,] GetLights()
-	{
-		//if (!chunkReady) throw new System.Exception($"Chunk {position} has not finished loading");
-		return light;
-	}
-
-	public byte[,,] NewLights()
-	{
-		//if (!chunkReady) throw new System.Exception($"Chunk {position} has not finished loading");
-		light = new byte[16, 256, 16];
-		return light;
-	}
-
-	public void StartTerrainLoading()
-	{
+	public void StartTerrainLoading() {
 		//Debug.Log($"Chunk {position} start terrain loading");
-		loadTerrainThread = new Thread(LoadTerrain);
-		loadTerrainThread.IsBackground = true;
-		loadTerrainThread.Start();
+		_loadTerrainThread = new Thread(LoadTerrain) {
+														 IsBackground = true
+													 };
+		_loadTerrainThread.Start();
 	}
 
-	public void StartDetailsLoading(ChunkData front, ChunkData left, ChunkData back, ChunkData right)
-	{
+	public void StartDetailsLoading(ChunkData front, ChunkData left, ChunkData back, ChunkData right) {
 		//Debug.Log($"Chunk {position} start structure loading");
 		//need to temporarily cache chunkdata of neighbors since generation is on another thread
 		this.front = front;
@@ -94,271 +91,369 @@ public class ChunkData
 		this.right = right;
 		this.back = back;
 
-		loadDetailsThread = new Thread(LoadDetails);
-		loadDetailsThread.IsBackground = true;
-		loadDetailsThread.Start();
-		startedLoadingDetails = true;
+		_loadDetailsThread = new Thread(LoadDetails) {
+														 IsBackground = true
+													 };
+		_loadDetailsThread.Start();
+		StartedLoadingDetails = true;
 	}
 
-	public void LoadTerrain() //also loads structures INFO
-	{
-		blocks = new byte[16, 256, 16];
-		light = new byte[16, 256, 16];
-		Vector2Int worldPos = position * 16;
+	private void LoadTerrain() {
+		//also loads structures INFO
+		_blocks = new Block[VoxelData.ChunkWidth, VoxelData.ChunkHeight, VoxelData.ChunkWidth];
 
-		for (int z = 0; z < 16; ++z)
-		{
-			for (int x = 0; x < 16; ++x)
-			{
-				int noiseX = worldPos.x + x;
-				int noiseZ = worldPos.y + z;
-				float height = SimplexNoise.Noise.CalcPixel2D(noiseX, noiseZ+50000, 0.01f);
-				height = height  * 16 + 64;
-				int heightInt = (int)height;
-
-				float bedrock = SimplexNoise.Noise.CalcPixel2D(noiseX, noiseZ+50000, 1f);
-				bedrock = bedrock * 3 + 1;
-				int bedrockInt = (int)bedrock;
-
-				for (int y = 0; y < 256; ++y)
-				{
-					//bedrock
-					if (y < bedrockInt)
-					{
-						blocks[x, y, z] = BlockTypes.BEDROCK;
-						continue;
+		for (var z = 0; z < VoxelData.ChunkWidth; ++z) {
+			for (var x = 0; x < VoxelData.ChunkWidth; ++x) {
+				/*if (_worldInfo.type == WorldInfo.Type.Flat) {
+					for (var y = 6; y < VoxelData.ChunkHeight; ++y) {
+						_blocks[x, y, z] = BlockTypes.Air;
 					}
 
-					//air
-					if (y > heightInt)
-					{
-						blocks[x, y, z] = BlockTypes.AIR;
-						continue;
-					}
-
-					//ores
-					float o1 = SimplexNoise.Noise.CalcPixel3D(noiseX + 50000, y, noiseZ, 0.1f);
-					float o2 = SimplexNoise.Noise.CalcPixel3D(noiseX + 40000, y, noiseZ, 0.1f);
-					float o3 = SimplexNoise.Noise.CalcPixel3D(noiseX + 30000, y, noiseZ, 0.04f);
-					float o4 = SimplexNoise.Noise.CalcPixel3D(noiseX + 60000, y, noiseZ, 0.1f);
-					float o5 = SimplexNoise.Noise.CalcPixel3D(noiseX + 70000, y, noiseZ, 0.1f);
-					float o6 = SimplexNoise.Noise.CalcPixel3D(noiseX + 80000, y, noiseZ, 0.03f);
-
-					float heightGradient = Mathf.Pow(Mathf.Clamp01(y / 128f), 2f);
-
-					//caves
-					float c1 = SimplexNoise.Noise.CalcPixel3D(noiseX, y, noiseZ, 0.1f);
-					float c2 = SimplexNoise.Noise.CalcPixel3D(noiseX, y, noiseZ, 0.04f);
-					float c3 = SimplexNoise.Noise.CalcPixel3D(noiseX, y, noiseZ, 0.02f);
-					float c4 = SimplexNoise.Noise.CalcPixel3D(noiseX, y, noiseZ, 0.01f);
-					
-					c1 += (heightGradient);
-					if (c1 < .5 && c2 < .5 && c3 < .5 && c4 < .5)
-					{
-						blocks[x, y, z] = BlockTypes.AIR;
-						continue;
-					}
-
-					//grass level
-					if (y == heightInt)
-					{
-						blocks[x, y, z] = BlockTypes.GRASS;
-						continue;
-					}
-
-					//dirt
-					if (y >= heightInt-4)
-					{
-						blocks[x, y, z] = BlockTypes.DIRT;
-						continue;
-					}
-
-					
-
-					o5 += (heightGradient);
-					if (y < 64 && o5 < .04)
-					{
-						blocks[x, y, z] = BlockTypes.GOLD;
-						continue;
-					}
-
-					if (y < 16 && Mathf.Pow(o2, 4f) > .7 && o3 < .1)
-					{
-						blocks[x, y, z] = BlockTypes.DIAMOND;
-						continue;
-					}
-
-					if (o4 < .1 && o6 > .8)
-					{
-						blocks[x, y, z] = BlockTypes.IRON;
-						continue;
-					}
-
-					if (o1 < .08)
-					{
-						blocks[x, y, z] = BlockTypes.COAL;
-						continue;
-					}
-
-					//remaining is stone
-					blocks[x, y, z] = BlockTypes.STONE;
+					_blocks[x, 5, z] = BlockTypes.Grass;
+					_blocks[x, 4, z] = BlockTypes.Dirt;
+					_blocks[x, 3, z] = BlockTypes.Dirt;
+					_blocks[x, 2, z] = BlockTypes.Stone;
+					_blocks[x, 1, z] = BlockTypes.Stone;
+					_blocks[x, 0, z] = BlockTypes.Bedrock;
 					continue;
+				}*/
+
+				_worldX = position.x * VoxelData.ChunkWidth + x;
+				_worldZ = position.y * VoxelData.ChunkWidth + z;
+				var bottomHeight = 0;
+
+				/* BIOME SELECTION PASS*/
+				if (_worldInfo.type == WorldInfo.Type.FloatingIslands) {
+					var distanceToSpawn = Vector2.Distance(new Vector2(_worldX, _worldZ), Vector2.zero);
+					var bigIsland = Mathf.Clamp01((250f - distanceToSpawn) / 250f);
+					var i1 = noise.GetNoise(_worldX * .5f, _worldZ * .5f);
+					var i2 = noise.GetNoise(_worldX * 1f, _worldZ * 1f);
+					var i3 = noise.GetNoise(_worldX * 5f, _worldZ * 5f);
+					var height = Mathf.Min(i1, i2) + bigIsland + i3 * 0.02f;
+					height = Mathf.Clamp01(height - 0.1f) / 0.9f;
+					height = Mathf.Pow(height, 1f / 2);
+					if (height == 0) {
+						for (var y = 0; y < VoxelData.ChunkHeight; ++y) {
+							_blocks[x, y, z] = Blocks.Air;
+						}
+
+						continue;
+					}
+
+					// hills *= height; //smooth edge
+					bottomHeight = (int)(SURFACE_HEIGHT - height * 80);
 				}
-			}
-		}
 
-		string hash = World.activeWorld.info.seed.ToString() + position.x.ToString() + position.y.ToString();
-		int structuresSeed = hash.GetHashCode();
-		//Debug.Log("Chunk structures seed is " + structuresSeed);
-		System.Random rnd = new System.Random(structuresSeed);
-		structures = new List<StructureInfo>();
-		bool[,] spotsTaken = new bool[16, 16];
+				for (var y = 0; y < VoxelData.ChunkHeight; ++y) {
+					const int solidGroundHeight = 42;
+					var sumOfHeights = 0f;
+					var count = 0;
+					var strongestWeight = 0f;
+					var strongestBiomeIndex = 0;
 
-		//cave entrances
-		if (rnd.Next() < STRUCTURE_CHANCE_CAVE_ENTRANCE)
-		{
+					for (var i = 0; i < world.biomes.Length; i++) {
+						var weight = Noise.Get2DPerlin(_worldInfo, new Vector2(_worldX, _worldZ),
+													   world.biomes[i].offset,
+													   world.biomes[i].scale);
 
-			int h = 255;
-			while (h > 0)
-			{
-				if (blocks[8, h, 8] != BlockTypes.AIR)
-				{
-					structures.Add(new StructureInfo(new Vector3Int(0, h + 6, 0), Structure.Type.CAVE_ENTRANCE, rnd.Next()));
-					//Debug.Log($"Adding cave entrance at {position.x} {position.y}");
-					break;
-				}
-				h--;
-			}
-		}
+						// Keep track of which weight is strongest.
+						if (weight > strongestWeight) {
+							strongestWeight = weight;
+							strongestBiomeIndex = i;
+						}
 
-		//trees
-		for (int y = 2; y < 14; ++y)
-		{
-			for (int x = 2; x < 14; ++x)
-			{
-				if (rnd.Next() < STRUCTURE_CHANCE_TREE)
-				{
-					if (IsSpotFree(spotsTaken, new Vector2Int(x, y), 2))
-					{
-						spotsTaken[x, y] = true;
-						int height = 255;
-						while (height > 0)
-						{
-							if (blocks[x, height, y] == BlockTypes.GRASS)
-							{
-								structures.Add(new StructureInfo(new Vector3Int(x, height + 1, y), Structure.Type.OAK_TREE, rnd.Next()));
-								break;
+						// Get the height of the terrain (for the current biome) and multiply it by its weight.
+						var height = world.biomes[i].terrainHeight *
+									 Noise.Get2DPerlin(_worldInfo, new Vector2(_worldX, _worldZ), 0,
+													   world.biomes[i].terrainScale) * weight;
+
+						// If the height value is greater 0 add it to the sum of heights.
+						if (!(height > 0)) continue;
+						sumOfHeights += height;
+						count++;
+					}
+
+					// Set biome to the one with the strongest weight.
+					var biome = world.biomes[strongestBiomeIndex];
+
+					// Get the average of the heights.
+					sumOfHeights /= count;
+
+					var terrainHeight = Mathf.FloorToInt(sumOfHeights + solidGroundHeight);
+
+					var hills = noise.GetNoise(_worldX * 4f + 500, _worldZ * 4f) * biome.terrainScale + 3f;
+
+					var hillHeight = (int)(SURFACE_HEIGHT + hills * 32);
+					var bedrock = noise.GetNoise(_worldX * 64f, _worldZ * 64f) * 0.5f + 0.5f;
+					var bedrockHeight = (int)(bottomHeight + bedrock * 4);
+					
+					if (y > hillHeight || y < bottomHeight + 1) {
+						_blocks[x, y, z] = Blocks.Air;
+						continue;
+					}
+
+					// if (y <= bedrockHeight) {
+					// 	_blocks[x, y, z] = BlockTypes.Bedrock;
+					// 	continue;
+					// }
+
+					if (y > hillHeight - 4) {
+						if (GenerateCaves(x, y, z, 0.2f)) continue;
+						if (y == hillHeight) {
+							var noiseValue = noise.GetNoise(x, y, z);
+
+							if (noiseValue > biome.minNoiseValue && noiseValue < biome.maxNoiseValue) {
+								_blocks[x, y, z] = biome.newSurfaceBlock;
 							}
-							height--;
+							
+							/*if (noiseValue == 0) {
+								_blocks[x, y, z] = BlockTypes.Andesite;
+							} else if (noiseValue > 0 && noiseValue < 0.2) {
+								_blocks[x, y, z] = BlockTypes.Diorite;
+							} else if (noiseValue > 0.2 && noiseValue < 0.4) {
+								_blocks[x, y, z] = BlockTypes.Granite;
+							} else if (noiseValue > 0.4 && noiseValue < 0.6) {
+								_blocks[x, y, z] = BlockTypes.OakPlanks;
+							} else if (noiseValue > 0.6 && noiseValue < 0.8) {
+								_blocks[x, y, z] = BlockTypes.BirchPlanks;
+							} else if (noiseValue > 0.8 && noiseValue < 1) {
+								_blocks[x, y, z] = BlockTypes.DarkOakPlanks;
+							}*/
+							continue;
+						}
+
+						_blocks[x, y - 1, z] = biome.newSubSurfaceBlock;
+						_blocks[x, y - 2, z] = biome.newSubSurfaceBlock;
+					}
+					else {
+						if (GenerateCaves(x, y, z, 0f)) continue;
+						if (GenerateOres(x, y, z)) continue;
+
+						_blocks[x, y, z] = y < 9 ? Blocks.Deepslate : Blocks.Stone;
+
+						if (_blocks[x, y, z] != Blocks.Stone) continue;
+						foreach (var lode in biome.lodes) {
+							if (y <= lode.minHeight || y >= lode.maxHeight) continue;
+							if (Noise.Get3DPerlin(_worldInfo, new Vector3(_worldX, y, _worldZ), lode.noiseOffset,
+											      lode.scale, lode.threshold)) 
+								_blocks[x, y, z] = lode.block;
 						}
 					}
 				}
 			}
 		}
 
-		if (rnd.Next() < STRUCTURE_CHANCE_WELL)
-		{
-			if (IsSpotFree(spotsTaken, new Vector2Int(7, 7), 3))
-			{
+		var hash = World.activeWorld.info.seed.ToString() + position.x + position.y;
+		var structuresSeed = hash.GetHashCode();
+		var rnd = new System.Random(structuresSeed);
+		_structures = new List<StructureInfo>();
+		var spotsTaken = new bool[VoxelData.ChunkWidth, VoxelData.ChunkWidth];
+
+		if (_worldInfo.type != WorldInfo.Type.Flat) {
+			//cave entrances
+			if (rnd.Next() < STRUCTURE_CHANCE_CAVE_ENTRANCE) {
+				var h = 255;
+				while (h > 0) {
+					if (_blocks[8, h, 8] != Blocks.Air) {
+						_structures.Add(new StructureInfo(new Vector3Int(0, h + 6, 0), Structure.Type.CaveEntrance,
+														  rnd.Next()));
+						break;
+					}
+
+					h--;
+				}
+			}
+
+			//trees
+			for (var y = 2; y < 14; ++y) {
+				for (var x = 2; x < 14; ++x) {
+					if (rnd.Next() >= STRUCTURE_CHANCE_TREE) continue;
+					if (!IsSpotFree(spotsTaken, new Vector2Int(x, y), 2)) continue;
+					spotsTaken[x, y] = true;
+					var height = 255;
+					while (height > 0) {
+						if (_blocks[x, height, y] == Blocks.Grass) {
+							_structures.Add(new StructureInfo(new Vector3Int(x, height + 1, y),
+															  Structure.Type.OakTree, rnd.Next()));
+							break;
+						}
+
+						height--;
+					}
+				}
+			}
+
+			//trees
+			for (var y = 2; y < 14; ++y) {
+				for (var x = 2; x < 14; ++x) {
+					if (rnd.Next() >= STRUCTURE_CHANCE_BIRCH_TREE) continue;
+					if (!IsSpotFree(spotsTaken, new Vector2Int(x, y), 2)) continue;
+					spotsTaken[x, y] = true;
+					var height = 255;
+					while (height > 0) {
+						if (_blocks[x, height, y] == Blocks.Grass) {
+							_structures.Add(new StructureInfo(new Vector3Int(x, height + 1, y),
+															  Structure.Type.BirchTree, rnd.Next()));
+							break;
+						}
+
+						height--;
+					}
+				}
+			}
+		}
+
+		if (rnd.Next() < STRUCTURE_CHANCE_WELL) {
+			if (IsSpotFree(spotsTaken, new Vector2Int(7, 7), 3)) {
 				//Debug.Log("Spot is free");
 
-				int minH = 255;
-				int maxH = 0;
-				bool canPlace = true;
-				for (int y = 5; y < 11; ++y)
-				{
-					for (int x = 5; x < 11; ++x)
-					{
-						for (int h = 255; h > -1; h--)
-						{
-							byte b = blocks[x, h, y];
-							if (b != BlockTypes.AIR)
-							{
-								//Debug.Log(b);
-								canPlace &= (b == BlockTypes.GRASS);
-								minH = Mathf.Min(minH, h);
-								maxH = Mathf.Max(maxH, h);
-								break;
-							}
+				var minH = 255;
+				var maxH = 0;
+				var canPlace = true;
+				for (var y = 5; y < 11; ++y) {
+					for (var x = 5; x < 11; ++x) {
+						for (var h = 255; h > -1; h--) {
+							var b = _blocks[x, h, y];
+							if (b == Blocks.Air) continue;
+							//Debug.Log(b);
+							canPlace &= b == Blocks.Grass;
+							minH = Mathf.Min(minH, h);
+							maxH = Mathf.Max(maxH, h);
+							break;
 						}
 					}
 				}
+
 				canPlace &= Mathf.Abs(minH - maxH) < 2;
-				if (canPlace)
-				{
+				if (canPlace) {
 					Debug.Log("spawning well structure");
-					for (int y = 5; y < 11; ++y)
-					{
-						for (int x = 5; x < 11; ++x)
-						{
+					for (var y = 5; y < 11; ++y) {
+						for (var x = 5; x < 11; ++x) {
 							spotsTaken[x, y] = true;
 						}
 					}
-					int h = 255;
-					while (h > 0)
-					{
-						if (blocks[7, h, 7] != BlockTypes.AIR)
-						{
-							structures.Add(new StructureInfo(new Vector3Int(7, h + 1, 7), Structure.Type.WELL, rnd.Next()));
+
+					var h = 255;
+					while (h > 0) {
+						if (_blocks[7, h, 7] != Blocks.Air) {
+							_structures.Add(
+								new StructureInfo(new Vector3Int(7, h + 1, 7), Structure.Type.Well, rnd.Next()));
 							break;
 						}
+
 						h--;
 					}
 				}
 			}
 		}
 
-		
-
 		//already load changes from disk here (apply later)
-		saveData = SaveDataManager.instance.Load(position);
+		_saveData = SaveDataManager.Instance.Load(position);
 
-		terrainReady = true;
+		TerrainReady = true;
 		//Debug.Log($"Chunk {position} terrain ready");
-
 	}
 
-	private bool IsSpotFree(bool[,] spotsTaken, Vector2Int position, int size) //x area is for example size + 1 + size
+	private bool GenerateCaves(int x, int y, int z, float threshold) {
+		var cave1 = noise.GetNoise(_worldX * 10f - 400, y * 10f, _worldZ * 10f);
+		var cave2 = noise.GetNoise(_worldX * 20f - 600, y * 20f, _worldZ * 20f);
+		var cave3 = noise.GetNoise(_worldX * 7f - 200, y * 7f, _worldZ * 7f);
+		var cave4 = noise.GetNoise(_worldX * 4f - 300, y * 4f, _worldZ * 4f);
+		var cave = Mathf.Min(Mathf.Min(cave1, cave4), Mathf.Min(cave2, cave3));
+
+		if (!(cave > threshold)) return false;
+		_blocks[x, y, z] = Blocks.Air;
+		return true;
+	}
+
+	private bool GenerateOres(int x, int y, int z) {
+		var ore1 = noise.GetNoise(_worldX * 15f, y * 15f, _worldZ * 15f + 300);
+		var ore2 = noise.GetNoise(_worldX * 15f, y * 15f, _worldZ * 15f + 400);
+
+
+		if (ore1 > 0.3 && ore2 > 0.4) {
+			_blocks[x, y, z] = Blocks.Diorite;
+			return true;
+		}
+
+		if (ore1 < -0.3 && ore2 < -0.4) {
+			_blocks[x, y, z] = Blocks.Granite;
+			return true;
+		}
+
+		if (ore1 > 0.3 && ore2 < -0.4) {
+			_blocks[x, y, z] = Blocks.Andesite;
+			return true;
+		}
+
+
+		var ore3 = noise.GetNoise(_worldX * 20f, y * 20f, _worldZ * 20f + 500);
+
+		if (ore1 < -0.3 && ore3 > 0.4) {
+			_blocks[x, y, z] = Blocks.CoalOre;
+			return true;
+		}
+
+		var ore4 = noise.GetNoise(_worldX * 21f, y * 21f, _worldZ * 21f - 300);
+
+		if (ore4 > 0.6) {
+			_blocks[x, y, z] = Blocks.IronOre;
+			return true;
+		}
+
+		if (y >= 32) return false;
+		var ore5 = noise.GetNoise(_worldX * 22f, y * 22f, _worldZ * 22f - 400);
+
+		if (ore5 > 0.7) {
+			_blocks[x, y, z] = Blocks.GoldOre;
+			return true;
+		}
+
+		if (y >= 16) return false;
+		if (!(ore5 < -0.7)) return false;
+		_blocks[x, y, z] = Blocks.DiamondOre;
+		return true;
+	}
+
+	private static bool
+		IsSpotFree(bool[,] spotsTaken, Vector2Int position, int size) //x area is for example size + 1 + size
 	{
-		bool spotTaken = false;
-		for (int y = Mathf.Max(0, position.y-size); y < Mathf.Min(15, position.y + size + 1); ++y)
-		{
-			for (int x = Mathf.Max(0, position.x-size); x < Mathf.Min(15, position.x + size + 1); ++x)
-			{
+		var spotTaken = false;
+		for (var y = Mathf.Max(0, position.y - size); y < Mathf.Min(15, position.y + size + 1); ++y) {
+			for (var x = Mathf.Max(0, position.x - size); x < Mathf.Min(15, position.x + size + 1); ++x) {
 				spotTaken |= spotsTaken[x, y];
 			}
 		}
+
 		return !spotTaken;
 	}
 
-	private void LoadDetails()
-	{
+	private void LoadDetails() {
 		//load structures
 
-		for (int i = 0; i < structures.Count; ++i)
-		{
-			StructureInfo structure = structures[i];
-			bool overwritesEverything = Structure.OverwritesEverything(structure.type);
-			Vector3Int p = structure.position;
-			int x = p.x;
-			int y = p.y;
-			int z = p.z;
-			List<Structure.Change> changeList = Structure.Generate(structure.type, structure.seed);
-			//Debug.Log($"placing {structure.type} wich has {changeList.Count} blocks");
-			for (int j = 0; j < changeList.Count; ++j)
-			{
-				Structure.Change c = changeList[j];
-				int placeX = x + c.x;
-				int placeY = y + c.y;
-				int placeZ = z + c.z;
+		foreach (var structure in _structures) {
+			var overwritesEverything = Structure.OverwritesEverything(structure.type);
+			var p = structure.position;
+			var x = p.x;
+			var y = p.y;
+			var z = p.z;
+			var changeList = Structure.Generate(structure.type, structure.seed);
+			//Debug.Log($"placing {structure.type} which has {changeList.Count} blocks");
+			foreach (var c in changeList) {
+				var placeX = x + c.x;
+				var placeY = y + c.y;
+				var placeZ = z + c.z;
+				if (placeX is < 0 or > 15) continue;
+				if (placeZ is < 0 or > 15) continue;
+				if (placeY is < 0 or > 255) continue;
+				if (_blocks[placeX, placeY, placeZ] == Blocks.Bedrock) continue;
 
-				if (!overwritesEverything)
-				{
+				if (!overwritesEverything) {
 					//only place new blocks if density is higher or the same (leaves can't replace dirt for example)
-					if (blocks[placeX, placeY, placeZ] < BlockTypes.density[c.b]) continue;
+					if (_blocks[placeX, placeY, placeZ].GetMaterial().IsReplaceable()) continue;
 				}
 
-				blocks[placeX, placeY, placeZ] = c.b;
+				_blocks[x, y, z] = c.b;
 			}
 		}
 
@@ -368,95 +463,57 @@ public class ChunkData
 		right = null;
 		back = null;
 
-		//add sky light
-		//for (int z = 0; z < 16; ++z)
-		//{
-		//	for (int x = 0; x < 16; ++x)
-		//	{
-		//		byte ray = 15;
-		//		for (int y = 255; y > -1; --y)
-		//		{
-		//			byte block = blocks[x, y, z];
-		//			if (block == 0)
-		//			{
-		//				light[x, y, z] = ray;
-		//			}
-		//			else
-		//			{
-		//				if (block < 128) break;
-		//				light[x, y, z] = ray;
-		//			}
-		//		}
-		//	}
-		//}
-		//Debug.Log($"Chunk {position} structures ready");
 		//load changes
-		List<ChunkSaveData.C> changes = saveData.changes;
-		for (int i = 0; i < changes.Count; ++i)
-		{
-			ChunkSaveData.C c = changes[i];
-			blocks[c.x, c.y, c.z] = c.b;
-			byte lightLevel = BlockTypes.lightLevel[c.b];
-			if (lightLevel > 0)
-			{
-				lightSources.Add(new Vector3Int(c.x, c.y, c.z), lightLevel);
+		var changes = _saveData.changes;
+		foreach (var c in changes) {
+			_blocks[c.x, c.y, c.z] = BlockTypes.byteToBlock[c.b];
+			var lightLevel = BlockTypes.byteToBlock[c.b].GetLightLevel();
+			if (lightLevel > 0) {
+				lightSources[new Vector3Int(c.x, c.y, c.z)] = lightLevel;
 			}
 		}
 
 		//get highest non-air blocks to speed up light simulation
-		for (int z = 0; z < 16; ++z)
-		{
-			for (int x = 0; x < 16; ++x)
-			{
+		for (var z = 0; z < 16; ++z) {
+			for (var x = 0; x < 16; ++x) {
 				highestNonAirBlock[x, z] = 0;
-				for (int y = 255; y > -1; --y)
-				{
-					if (blocks[x, y, z] != BlockTypes.AIR)
-					{
-						highestNonAirBlock[x, z] = (byte)y;
-						break;
-					}
+				for (var y = 255; y > -1; --y) {
+					if (_blocks[x, y, z] == Blocks.Air) continue;
+					highestNonAirBlock[x, z] = y;
+					break;
 				}
 			}
 		}
-		chunkReady = true;
-		//Debug.Log($"Chunk {position} ready");
+
+		ChunkReady = true;
 	}
 
-	public void Modify(int x, int y, int z, byte blockType)
-	{
-		if (!chunkReady) throw new System.Exception("Chunk has not finished loading");
+	public void Modify(int x, int y, int z, Block blockType) {
+		if (!ChunkReady) throw new System.Exception("Chunk has not finished loading");
 		Debug.Log($"Current highest block at {x}x{z} is {highestNonAirBlock[x, z]}");
 
-		saveData.changes.Add(new ChunkSaveData.C((byte)x, (byte)y, (byte)z, blockType));
-		blocks[x, y, z] = blockType;
-		if (blockType == BlockTypes.AIR)
-		{
-			if (highestNonAirBlock[x, z] == y)
-			{
+		_saveData.changes.Add(new ChunkSaveData.C((byte)x, (byte)y, (byte)z, blockType));
+		_blocks[x, y, z] = blockType;
+		if (blockType == Blocks.Air) {
+			if (highestNonAirBlock[x, z] == y) {
 				highestNonAirBlock[x, z] = 0;
-				for (int yy = y; yy > -1; yy--)
-				{
-					if (blocks[x, yy, z] != BlockTypes.AIR)
-					{
-						highestNonAirBlock[x, z] = (byte)yy;
-						break;
-					}
+				for (var yy = y; yy > -1; yy--) {
+					if (_blocks[x, yy, z] == Blocks.Air) continue;
+					highestNonAirBlock[x, z] = (byte)yy;
+					break;
 				}
 			}
 		}
-		else
-		{
+		else {
 			highestNonAirBlock[x, z] = (byte)Mathf.Max(highestNonAirBlock[x, z], y);
 		}
+
 		Debug.Log($"New highest block at {x}x{z} is {highestNonAirBlock[x, z]}");
 	}
 
-	public void Unload()
-	{
-		if (isDirty)
-		{
-			SaveDataManager.instance.Save(saveData);
+	public void Unload() {
+		if (isDirty) {
+			SaveDataManager.Instance.Save(_saveData);
 		}
 	}
 }

@@ -1,7 +1,9 @@
-﻿[System.Serializable]
+﻿using UnityEngine.Serialization;
+
+[System.Serializable]
 public class GameSettings
 {
-	public int RenderDistance=16;
+	[FormerlySerializedAs("RenderDistance")] public int renderDistance=1;
 	public int maximumLoadQueueSize=8;
 	public float minimumLightLevel = 0.1f;
 }
